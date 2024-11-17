@@ -19,7 +19,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import AdaBoostClassifier
 
 
-df=pd.read_csv('/data/aapl_data.csv')
+df=pd.read_csv('/Users/3bdulla/Desktop/University/DS 340W/Code/data/aapl_data.csv')
 # Filter and remove rows where 'volume' is 0
 d = df[df['volume'] == 0]
 df = df.drop(d.index, axis=0)
@@ -126,9 +126,9 @@ df.dropna(inplace=True)
 
 # Define target and features
 y = df[['signal']].copy()
-X = df[['rsi', 'adx', 'corr', 'volume', 'Open-Close', 'Close-Low']].copy()
+X = df[['rsi', 'adx', 'corr', 'sma', 'NATR', 'volume', 'Open-Close', 'Close-Low', 'Close-High']].copy()
 
-z=df[['signal', 'rsi','adx', 'corr','volume','Open-Close','Close-Low']].copy()
+z=df[['rsi', 'adx', 'corr', 'sma', 'NATR', 'volume', 'Open-Close', 'Close-Low', 'Close-High']].copy()
 corr = z.corr()
 figure(figsize=(8, 6), dpi=80)
 sns.heatmap(corr, annot=True, annot_kws = {"size": 6})
@@ -179,7 +179,7 @@ for col in X.columns:
     else:
         print('%s is stationary.' % col)
 
-split_percentage = 0.8
+split_percentage = 0.7
 split = int(split_percentage*len(df))
 
 
@@ -219,7 +219,7 @@ else:
     print('Hold')
 print(Prediction)
 
-split_percentage = 0.8
+split_percentage = 0.7
 split = int(split_percentage*len(df))
 temp=pd.DataFrame()
 temp['close'] = df.close.iloc[split:]
@@ -357,7 +357,7 @@ data=[trace1,trace4,trace5,trace6,trace7]
 layout=go.Layout(
     title=symb,
     yaxis=dict(title='Assest value'),
-    xaxis=dict(title='Time And date'))
+    xaxis=dict(title='Days'))
 figure=go.Figure(data=data,layout=layout)
 figure.update_layout(xaxis_rangeslider_visible=False)
 pox.plot(figure)
