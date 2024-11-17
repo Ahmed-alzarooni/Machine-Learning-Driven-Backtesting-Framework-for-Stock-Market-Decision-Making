@@ -1,0 +1,363 @@
+import plotly.offline as pox
+import plotly.graph_objs as go
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score,classification_report
+import alpaca_trade_api as tradeapi
+from alpaca_trade_api import TimeFrame, TimeFrameUnit
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+import seaborn as sns
+from matplotlib.pyplot import figure
+from statsmodels.tsa.stattools import adfuller
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import AdaBoostClassifier
+
+
+df=pd.read_csv('/data/aapl_data.csv')
+# Filter and remove rows where 'volume' is 0
+d = df[df['volume'] == 0]
+df = df.drop(d.index, axis=0)
+
+# Convert 'time' to datetime format and extract only the date part
+df['time'] = pd.to_datetime(df['time'], errors='coerce').dt.date
+
+# Set the 'time' column as the index
+df = df.set_index('time')
+
+# Sort the DataFrame by date
+df = df.sort_index(ascending=True)
+
+# Drop the last 16 rows
+df.drop(df.tail(16).index, inplace=True)
+
+# Create a copy of the modified DataFrame
+next = df.copy()
+
+# Display the tail of the new DataFrame and print "done"
+print(next.tail())
+print("done")
+
+import pandas as pd
+import numpy as np
+
+# Calculate future returns and signals
+df['future_returns'] = df['close'].pct_change().shift(-1)
+signal = []
+for i in range(len(df)):
+    if df['future_returns'].iloc[i] > 0:
+        signal.append(1)
+    elif df['future_returns'].iloc[i] < 0:
+        signal.append(2)
+    else:
+        signal.append(3)
+
+df['signal'] = signal
+
+# Calculate RSI
+def calculate_rsi(data, window=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+df['rsi'] = calculate_rsi(df['close'], 14)
+
+# Calculate ADX
+def calculate_adx(df, period=50):
+    high = df['high']
+    low = df['low']
+    close = df['close']
+    
+    plus_dm = high.diff()
+    minus_dm = low.diff()
+    
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm > 0] = 0
+
+    tr1 = pd.DataFrame(high - low)
+    tr2 = pd.DataFrame(abs(high - close.shift(1)))
+    tr3 = pd.DataFrame(abs(low - close.shift(1)))
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr = true_range.rolling(window=period).mean()
+
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+    minus_di = 100 * (minus_dm.abs().rolling(window=period).mean() / atr)
+
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    adx = dx.rolling(window=period).mean()
+    return adx
+
+df['adx'] = calculate_adx(df, 50)
+
+# Calculate NATR
+def calculate_natr(df, period=50):
+    tr1 = df['high'] - df['low']
+    tr2 = abs(df['high'] - df['close'].shift(1))
+    tr3 = abs(df['low'] - df['close'].shift(1))
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = true_range.rolling(window=period).mean()
+    natr = (atr / df['close']) * 100
+    return natr
+
+df['NATR'] = calculate_natr(df, 50)
+
+# Calculate SMA
+df['sma'] = df['close'].rolling(window=30).mean()
+
+# Calculate correlation
+df['corr'] = df['close'].rolling(window=int(6.5 * 4)).corr(df['sma'])
+
+# Other features
+df['Open-Close'] = (df['open'] - df['close']).shift(-1)
+df['Close-High'] = (df['close'] - df['high']).shift(-1)
+df['Close-Low'] = (df['close'] - df['low']).shift(-1)
+
+# Drop NaN values
+df.dropna(inplace=True)
+
+# Define target and features
+y = df[['signal']].copy()
+X = df[['rsi', 'adx', 'corr', 'volume', 'Open-Close', 'Close-Low']].copy()
+
+z=df[['signal', 'rsi','adx', 'corr','volume','Open-Close','Close-Low']].copy()
+corr = z.corr()
+figure(figsize=(8, 6), dpi=80)
+sns.heatmap(corr, annot=True, annot_kws = {"size": 6})
+plt.yticks(rotation=0, size = 14); 
+plt.xticks(rotation=90, size = 14)  # fix ticklabel directions and size
+plt.tight_layout()  # fits plot area to the plot, "tightly"
+plt.show()  # show the plot
+
+def get_pair_above_threshold(X, threshold):
+    """Function to return the pairs with correlation above threshold.
+    """
+    # Calculate the correlation matrix
+    correl = X.corr()
+
+    # Unstack the matrix
+    correl = correl.abs().unstack()
+
+    # Recurring & redundant pair
+    pairs_to_drop = set()
+    cols = X.corr().columns
+   
+    for i in range(0, X.corr().shape[1]):
+        for j in range(0, i+1):
+            pairs_to_drop.add((cols[i], cols[j]))
+
+    # Drop the recurring & redundant pair
+    correl = correl.drop(labels=pairs_to_drop).sort_values(ascending=False)
+
+    return correl[correl > threshold].index
+
+
+print(get_pair_above_threshold(X, 0.7))
+
+
+def stationary(series):
+    """Function to check if the series is stationary or not.
+    """
+    result = adfuller(series)
+    if(result[1] < 0.05):
+        return 'stationary'
+    else:
+        return 'not stationary'
+# Check for stationarity
+for col in X.columns:
+    if stationary(df[col]) == 'not stationary':
+        print('%s is not stationary. Dropping it.' % col)
+        X.drop(columns=[col], axis=1, inplace=True)
+    else:
+        print('%s is stationary.' % col)
+
+split_percentage = 0.8
+split = int(split_percentage*len(df))
+
+
+# Train data set
+X_train = X[:split]
+y_train = y[:split]
+X_test =  X[split:]
+y_test =  y[split:]
+        
+scaler=StandardScaler()
+X_train=scaler.fit_transform(X_train)
+X_test=scaler.fit_transform(X_test)
+# model=SVC()
+# model1 = KNeighborsClassifier(n_neighbors=50)
+# model2 = LogisticRegression()
+# model3=DecisionTreeClassifier()
+# model=SVC()
+# model=VotingClassifier([('knn',model1),('lr',model2),('ds',model3),('svm',model4)])
+# model=AdaBoostClassifier(base_estimator=model3)
+model = RandomForestClassifier(n_estimators=100,random_state=30)
+model.fit(X_train, y_train['signal'])
+y_pred = model.predict(X_test)
+Accuracy =accuracy_score(y_test, y_pred)
+print(Accuracy)
+
+# Classification report
+classification_report_data = classification_report(y_test, y_pred)
+# Print the classification report
+print(classification_report_data)
+
+Prediction=model.predict(X)[-1]
+if Prediction==1:
+    print('Buy')
+elif Prediction==2:
+    print('Sell')
+else:
+    print('Hold')
+print(Prediction)
+
+split_percentage = 0.8
+split = int(split_percentage*len(df))
+temp=pd.DataFrame()
+temp['close'] = df.close.iloc[split:]
+temp['signal']=np.array(y_pred)
+print(temp.tail())
+
+# Variable Required for decision making
+buy=[]
+sell=[]
+profit=[]
+Close_profit=[]
+Stop_loss=[]
+Close_order_buy=[]
+Close_order_sell=[]
+position_Buy=None
+position_Sell=None
+profit=0.4
+lose=0.4
+
+for i in range(len(temp)):
+   #####################################################################################################
+    if position_Buy!="Buy"  and position_Sell!="Sell" and Accuracy >0.50 and temp['signal'][i]== 1 :                          #Buy Position
+                    buy.append(temp['close'][i])
+                    sell.append(np.nan)
+                    Close_profit.append(np.nan)
+                    Stop_loss.append(np.nan)
+                    Close_order_buy.append(temp['close'][i])
+                    position_Buy="Buy"
+    #############################################################################################
+    elif  position_Sell!="Sell"  and position_Buy!="Buy" and Accuracy >0.50 and temp['signal'][i]== 2   :                     #Sell Position        
+                sell.append(temp['close'][i])              
+                buy.append(np.nan)
+                Close_profit.append(np.nan)
+                Stop_loss.append(np.nan)
+                Close_order_sell.append(temp['close'][i])
+                position_Sell="Sell"
+        
+    #################################################################################################
+    elif position_Sell=="Sell" :                                               #Closing Order  After  Buying a trade(Profit)
+        if ((Close_order_sell[-1]+lose) <= temp['close'][i]):                   #Take Profit Condition
+            Close_profit.append(np.nan)                                        #append to take profit
+            Stop_loss.append(temp['close'][i])
+            buy.append(np.nan)
+            sell.append(np.nan)
+            position_Sell=None
+        elif ((Close_order_sell[-1]-(profit)) >= temp['close'][i]):                   #Stop Loss Condition
+            Close_profit.append(temp['close'][i])
+            Stop_loss.append(np.nan)                                                #Appending to stop loss
+            buy.append(np.nan)
+            sell.append(np.nan)
+            position_Sell=None
+        else:
+            Close_profit.append(np.nan)
+            Stop_loss.append(np.nan)
+            buy.append(np.nan)
+            sell.append(np.nan)
+    ########################################################################################################
+    elif position_Buy=="Buy" :                                               #Closing Order  After  Buying a trade(Profit)
+        if ((Close_order_buy[-1]+profit) <= temp['close'][i]):                  #Take Profit Condition
+            Close_profit.append(temp['close'][i])                          #append to take profit
+            Stop_loss.append(np.nan)
+            buy.append(np.nan)
+            sell.append(np.nan)
+            position_Buy=None
+           
+        elif ((Close_order_buy[-1]-lose) >= temp['close'][i]):                   #Stop Loss Condition
+            Close_profit.append(np.nan)
+            Stop_loss.append(temp['close'][i])                                  #Appending to stop loss
+            buy.append(np.nan)
+            sell.append(np.nan)
+            position_Buy=None
+     
+        else:
+            Close_profit.append(np.nan)
+            Stop_loss.append(np.nan)
+            buy.append(np.nan)
+            sell.append(np.nan)
+#################################################################
+    else:
+            buy.append(np.nan)
+            sell.append(np.nan)
+            Stop_loss.append(np.nan)
+            Close_profit.append(np.nan)
+temp['buy']=buy
+temp['sell']=sell
+temp['Close_profit']=Close_profit
+temp['Stop_loss']=Stop_loss
+print((temp[temp['buy']!=np.nan]).count())
+print(f"Profitibily { temp['Close_profit'].count()/(temp['Close_profit'].count()+temp['Stop_loss'].count())}")
+
+symb = "AAPL"
+# trace1=go.Candlestick(
+# x=df.index,
+# low=df['low'],
+# close=df['close'],
+# open=df['open'],
+# high=df['high'],
+# increasing_line_color='green',
+# decreasing_line_color='red',
+# name='USD/EUR',
+# )
+trace1=go.Scatter(
+    y=temp.close,
+    mode='lines',
+    name='Close_price'
+)
+
+trace4=go.Scatter(
+   
+    y=temp['buy'],
+    mode='markers',
+    marker=dict(size=13,color='#00FF00',symbol='triangle-up' ),
+    name='buy'
+    )
+trace5=go.Scatter(
+    
+    y=temp.sell,
+    mode='markers',
+    marker=dict(size=13,color='#FF0000',symbol='triangle-down'),
+    name='sell')
+trace6=go.Scatter(
+    
+    y=temp.Close_profit,
+    mode='markers',
+    marker=dict(size=13,color='#00FF00',symbol='cross'),
+    name='Profit')
+trace7=go.Scatter(
+    
+    y=temp.Stop_loss,
+    mode='markers',
+    marker=dict(size=13,color='#FF0000',symbol='cross'),
+    name='Loss')
+
+data=[trace1,trace4,trace5,trace6,trace7]
+layout=go.Layout(
+    title=symb,
+    yaxis=dict(title='Assest value'),
+    xaxis=dict(title='Time And date'))
+figure=go.Figure(data=data,layout=layout)
+figure.update_layout(xaxis_rangeslider_visible=False)
+pox.plot(figure)
